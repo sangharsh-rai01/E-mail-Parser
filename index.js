@@ -145,3 +145,98 @@ app.get('/auth/google', (req, res) => {
       res.status(500).send('Error fetching emails');
     }
   });
+
+  // Analyze email content using OpenAI
+async function categorizeEmail(content) {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a helpful assistant. Classify the email content into one of the following categories: Interested, Not Interested, More Information.',
+        },
+        {
+          role: 'user',
+          content: content,
+        },
+      ],
+    });
+    const category = response.choices[0].message.content.trim();
+    return category;
+  }
+  
+  // Send automated replies based on the category
+  async function sendReply(auth, email, category) {
+    const gmail = google.gmail({ version: 'v1', auth });
+    let replyText;
+  
+    switch (category) {
+      case 'Interested':
+        replyText = 'Thank you for your interest! Would you be available for a demo call? Please let us know a suitable time.';
+        break;
+      case 'Not Interested':
+        replyText = 'Thank you for your response. If you change your mind, feel free to contact us again.';
+        break;
+      case 'More Information':
+        replyText = 'Thank you for your inquiry. Can you please provide more details about the information you need?';
+        break;
+      default:
+        replyText = 'Thank you for your email.';
+    }
+  
+    const raw = createRawEmail(email, replyText);
+  
+    await gmail.users.messages.send({
+      userId: 'me',
+      resource: {
+        raw: raw,
+      },
+    });
+  }
+  
+  function createRawEmail(email, replyText) {
+    const from = email.payload.headers.find(header => header.name === 'From').value;
+    const subject = email.payload.headers.find(header => header.name === 'Subject').value;
+    const messageId = email.id;
+  
+    const raw = [
+      `To: ${from}`,
+      `Subject: Re: ${subject}`,
+      `In-Reply-To: ${messageId}`,
+      `References: ${messageId}`,
+      '',
+      replyText,
+    ].join('\n');
+  
+    return Buffer.from(raw)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+  }
+  
+  // Set up task queue with BullMQ
+  const emailQueue = new Queue('emailQueue', { connection });
+  
+  new Worker('emailQueue', async job => {
+    const { email, category } = job.data;
+    await sendReply(oAuth2Client, email, category);
+  }, { connection });
+  
+  // Route to trigger email processing
+  app.get('/process-emails', async (req, res) => {
+    try {
+      const messages = await listMessages(oAuth2Client);
+      const emailPromises = messages.map(async msg => {
+        const email = await getMessage(oAuth2Client, msg.id);
+        const content = email.snippet;
+        const category = await categorizeEmail(content);
+        await emailQueue.add('sendEmail', { email, category });
+      });
+      await Promise.all(emailPromises);
+      res.send('Emails processed successfully');
+    } catch (error) {
+      console.error('Error processing emails:', error);
+      res.status(500).send('Error processing emails');
+    }
+  });  
