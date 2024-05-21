@@ -92,3 +92,56 @@ const oAuth2Client = new google.auth.OAuth2(
       res.send('Authentication successful! You can close this window.');
     });
   });
+
+  // Express Routes
+app.get('/auth/google', (req, res) => {
+    getGoogleAccessToken(oAuth2Client, res);
+  });
+  
+  app.get('/auth/google/parser', (req, res) => {
+    if (!oAuth2Client.credentials || !oAuth2Client.credentials.access_token) {
+      console.log('Token not found, requiring authentication');
+      return getGoogleAccessToken(oAuth2Client, res);
+    }
+    // Proceed with parsing after successful authentication
+    authorizeGoogle((err, authClient) => {
+      if (err) {
+        console.error('Authorization failed', err);
+        return res.status(500).send('Authorization failed');
+      }
+      // Here you can proceed with the logic that requires authorized Google API client
+      res.send('Google OAuth2 client is ready');
+    });
+  });
+  
+  // Fetch emails from Gmail
+  async function listMessages(auth) {
+    const gmail = google.gmail({ version: 'v1', auth });
+    const res = await gmail.users.messages.list({
+      userId: 'me',
+      q: 'is:unread', // Fetch only unread emails
+    });
+    const messages = res.data.messages || [];
+    return messages;
+  }
+  
+  async function getMessage(auth, messageId) {
+    const gmail = google.gmail({ version: 'v1', auth });
+    const res = await gmail.users.messages.get({
+      userId: 'me',
+      id: messageId,
+    });
+    return res.data;
+  }
+  
+  app.get('/fetch-emails', async (req, res) => {
+    try {
+      const messages = await listMessages(oAuth2Client);
+      const emailPromises = messages.map(msg => getMessage(oAuth2Client, msg.id));
+      const emails = await Promise.all(emailPromises);
+      res.json(emails);
+    } catch (error) {
+      console.error('Error fetching emails:', error);
+      res.status(500).send('Error fetching emails');
+    }
+  });
