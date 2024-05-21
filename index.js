@@ -44,3 +44,51 @@ const connection = new IORedis({
 });
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+// Initialize OAuth2 client for Google
+const oAuth2Client = new google.auth.OAuth2(
+    googleCredentials.client_id,
+    googleCredentials.client_secret,
+    googleCredentials.redirect_uris[0]
+  );
+  
+  // Function to get Google access token
+  function getGoogleAccessToken(oAuth2Client, res) {
+    const authUrl = oAuth2Client.generateAuthUrl({ access_type: 'offline', scope: SCOPES });
+    console.log('Authorize this app by visiting this URL:', authUrl);
+    res.redirect(authUrl);
+  }
+  
+  // OAuth2 Client Initialization for Google
+  fs.readFile(TOKEN_PATH, (err, token) => {
+    if (err) {
+      console.log('Token not found, requiring authentication');
+    } else {
+      oAuth2Client.setCredentials(JSON.parse(token));
+      console.log('OAuth2 client initialized');
+    }
+  });
+  
+  // Function to authorize Google
+  function authorizeGoogle(callback) {
+    if (!oAuth2Client.credentials || !oAuth2Client.credentials.access_token) {
+      console.log('OAuth2 client not initialized');
+      return callback(new Error('OAuth2 client not initialized'));
+    }
+    callback(null, oAuth2Client);
+  }
+  
+  // Function to handle Google OAuth2 callback
+  app.get('/auth/google/callback', (req, res) => {
+    const code = req.query.code;
+    oAuth2Client.getToken(code, (err, token) => {
+      if (err) {
+        console.error('Error retrieving access token', err);
+        return res.status(400).send('Authentication failed');
+      }
+      oAuth2Client.setCredentials(token);
+      fs.writeFileSync(TOKEN_PATH, JSON.stringify(token));
+      console.log('Token stored to', TOKEN_PATH);
+      res.send('Authentication successful! You can close this window.');
+    });
+  });
