@@ -193,7 +193,7 @@ async function categorizeEmail(content) {
       },
     });
   }
-  
+
   function createRawEmail(email, replyText) {
     const from = email.payload.headers.find(header => header.name === 'From').value;
     const subject = email.payload.headers.find(header => header.name === 'Subject').value;
@@ -240,3 +240,40 @@ async function categorizeEmail(content) {
       res.status(500).send('Error processing emails');
     }
   });  
+
+  // Initialize MSAL Public Client Application
+const msalConfig = {
+    auth: {
+      clientId: outlookCredentials.clientId,
+      authority: `https://login.microsoftonline.com/${outlookCredentials.tenantId}`,
+      clientSecret: outlookCredentials.clientSecret,
+    },
+  };
+  
+  const cca = new PublicClientApplication(msalConfig);
+  
+  async function getOutlookAuthenticatedClient() {
+    const authResult = await cca.acquireTokenByClientCredential({ scopes: ['https://graph.microsoft.com/.default'] });
+    const client = Client.init({
+      authProvider: done => done(null, authResult.accessToken),
+    });
+    return client;
+  }
+  
+  // Fetch emails from Outlook
+  app.get('/fetch-emails/outlook', async (req, res) => {
+    try {
+      const client = await getOutlookAuthenticatedClient();
+      const messages = await client.api('/me/messages').filter('isRead eq false').get();
+      res.json(messages.value);
+    } catch (error) {
+      console.error('Error fetching Outlook emails:', error);
+      res.status(500).send('Error fetching Outlook emails');
+    }
+  });
+  
+  // Start the server
+  app.listen(PORT, () => {
+    console.log(`Server started on port ${PORT}`);
+  });
+  
